@@ -80,3 +80,46 @@
     high-allocation: uint
   }
 )
+
+(define-map withdrawal-requests
+  uint ;; withdrawal ID
+  {
+    user: principal,
+    protocol-id: uint,
+    amount: uint,
+    request-height: uint,
+    timelock-blocks: uint,
+    status: (string-ascii 20) ;; "pending", "processed", "cancelled"
+  }
+)
+
+(define-map protocol-allocations
+  {strategy-id: uint, risk-level: uint}
+  {
+    protocol-id: uint,
+    allocation-percentage: uint  ;; in basis points (100 = 1%)
+  }
+)
+
+;; Authorization functions
+(define-read-only (get-contract-owner)
+  (ok (var-get contract-owner))
+)
+
+(define-private (is-contract-owner)
+  (is-eq tx-sender (var-get contract-owner))
+)
+
+(define-public (set-contract-owner (new-owner principal))
+  (begin
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    (ok (var-set contract-owner new-owner))
+  )
+)
+
+(define-public (set-insurance-fund-address (new-address principal))
+  (begin
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    (ok (var-set insurance-fund-address new-address))
+  )
+)
