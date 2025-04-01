@@ -17,7 +17,7 @@
 ;; The protocol earns revenue through performance-based fees (1%) and insurance contributions (0.5%),
 ;; creating sustainable incentives for long-term ecosystem growth.
 
-;; Error codes remain the same
+;; Error codes
 (define-constant ERR-NOT-AUTHORIZED (err u1000))
 (define-constant ERR-PROTOCOL-NOT-WHITELISTED (err u1001))
 (define-constant ERR-INSUFFICIENT-BALANCE (err u1002))
@@ -548,63 +548,62 @@
 )
 
 (define-public (auto-compound (protocol-id uint) (user principal))
-  (let
-    (
-      (protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
-      (user-deposit (unwrap! (map-get? user-deposits {user: user, protocol-id: protocol-id}) ERR-NO-USER-DEPOSIT))
-      (blocks-since-compound (- block-height (get last-compound user-deposit)))
-      (apy-bps (get current-apy-bps protocol))
-      (daily-rate (/ apy-bps u36500)) ;; APY to daily rate
-      (blocks-per-day u144) ;; ~24 hours (6 blocks per hour)
-      (days-elapsed (/ (* blocks-since-compound u10000) (* blocks-per-day u10000)))
-      (earnings (calculate-earnings (get amount user-deposit) daily-rate days-elapsed))
-      (performance-fee (/ (* earnings (var-get performance-fee-bps)) u10000))
-      (insurance-fee (/ (* earnings (var-get insurance-fee-bps)) u10000))
-      (net-earnings (- earnings (+ performance-fee insurance-fee)))
-      (current-user-totals (default-to {
-        total-deposited: u0,
-        total-withdrawn: u0,
-        total-earned: u0,
-        conservative-allocation: u3333,
-        moderate-allocation: u3333,
-        high-allocation: u3334
-      } (map-get? user-totals user)))
+  (let 
+    ((protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
+     (user-deposit (unwrap! (map-get? user-deposits {user: user, protocol-id: protocol-id}) ERR-NO-USER-DEPOSIT))
+     (blocks-since-compound (- block-height (get last-compound user-deposit)))
+     (apy-bps (get current-apy-bps protocol))
+     (daily-rate (/ apy-bps u36500)) ;; APY to daily rate
+     (blocks-per-day u144) ;; ~24 hours (6 blocks per hour)
+     (days-elapsed (/ (* blocks-since-compound u10000) (* blocks-per-day u10000)))
+     (earnings (calculate-earnings (get amount user-deposit) daily-rate days-elapsed))
+     (performance-fee (/ (* earnings (var-get performance-fee-bps)) u10000))
+     (insurance-fee (/ (* earnings (var-get insurance-fee-bps)) u10000))
+     (net-earnings (- earnings (+ performance-fee insurance-fee)))
+     (current-user-totals (default-to {
+       total-deposited: u0,
+       total-withdrawn: u0,
+       total-earned: u0,
+       conservative-allocation: u3333,
+       moderate-allocation: u3333,
+       high-allocation: u3334
+     } (map-get? user-totals user))))
+    
+    (begin
+      (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED) ;; Only owner can trigger compounding
+      
+      ;; Transfer fees
+      (if (> performance-fee u0)
+        (as-contract (contract-call? (get token-address protocol) transfer 
+                                   performance-fee 
+                                   tx-sender 
+                                   (var-get contract-owner) 
+                                   none))
+        true)
+      
+      (if (> insurance-fee u0)
+        (as-contract (contract-call? (get token-address protocol) transfer 
+                                   insurance-fee 
+                                   tx-sender 
+                                   (var-get insurance-fund-address) 
+                                   none))
+        true)
+      
+      ;; Update user deposit with compounded amount
+      (map-set user-deposits {user: user, protocol-id: protocol-id} {
+        amount: (+ (get amount user-deposit) net-earnings),
+        shares: (get shares user-deposit), ;; Shares remain the same during compounding
+        last-compound: block-height,
+        deposit-height: (get deposit-height user-deposit)
+      })
+      
+      ;; Update user totals
+      (map-set user-totals user (merge current-user-totals {
+        total-earned: (+ (get total-earned current-user-totals) net-earnings)
+      }))
+      
+      (ok net-earnings)
     )
-    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED) ;; Only owner can trigger compounding
-    
-    ;; Transfer fees
-    (if (> performance-fee u0)
-      (as-contract (contract-call? (get token-address protocol) transfer 
-                                  performance-fee 
-                                  tx-sender 
-                                  (var-get contract-owner) 
-                                  none))
-      true
-    )
-    
-    (if (> insurance-fee u0)
-      (as-contract (contract-call? (get token-address protocol) transfer 
-                                  insurance-fee 
-                                  tx-sender 
-                                  (var-get insurance-fund-address) 
-                                  none))
-      true
-    )
-    
-    ;; Update user deposit with compounded amount
-    (map-set user-deposits {user: user, protocol-id: protocol-id} {
-      amount: (+ (get amount user-deposit) net-earnings),
-      shares: (get shares user-deposit), ;; Shares remain the same during compounding
-      last-compound: block-height,
-      deposit-height: (get deposit-height user-deposit)
-    })
-    
-    ;; Update user totals
-    (map-set user-totals user (merge current-user-totals {
-      total-earned: (+ (get total-earned current-user-totals) net-earnings)
-    }))
-    
-    (ok net-earnings)
   )
 )
 
