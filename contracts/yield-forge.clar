@@ -521,3 +521,96 @@
     )
   )
 )
+
+;; Auto-compound function
+(define-public (auto-compound (protocol-id uint) (user principal))
+  (let
+    (
+      (protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
+      (user-deposit (unwrap! (map-get? user-deposits {user: user, protocol-id: protocol-id}) (err u1017)))
+      (blocks-since-compound (- block-height (get last-compound user-deposit)))
+      (apy-bps (get current-apy-bps protocol))
+      (daily-rate (/ apy-bps u36500)) ;; APY to daily rate
+      (blocks-per-day u144) ;; ~24 hours (6 blocks per hour)
+      (days-elapsed (/ (* blocks-since-compound u10000) (* blocks-per-day u10000)))
+      (earnings (calculate-earnings (get amount user-deposit) daily-rate days-elapsed))
+      (performance-fee (/ (* earnings (var-get performance-fee-bps)) u10000))
+      (insurance-fee (/ (* earnings (var-get insurance-fee-bps)) u10000))
+      (net-earnings (- earnings (+ performance-fee insurance-fee)))
+      (current-user-totals (default-to {
+        total-deposited: u0,
+        total-withdrawn: u0,
+        total-earned: u0,
+        conservative-allocation: u3333,
+        moderate-allocation: u3333,
+        high-allocation: u3334
+      } (map-get? user-totals user)))
+    )
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED) ;; Only owner can trigger compounding
+    
+    ;; Transfer fees
+    (if (> performance-fee u0)
+      (as-contract (contract-call? (get token-address protocol) transfer 
+                                  performance-fee 
+                                  tx-sender 
+                                  (var-get contract-owner) 
+                                  none))
+      true
+    )
+    
+    (if (> insurance-fee u0)
+      (as-contract (contract-call? (get token-address protocol) transfer 
+                                  insurance-fee 
+                                  tx-sender 
+                                  (var-get insurance-fund-address) 
+                                  none))
+      true
+    )
+    
+    ;; Update user deposit with compounded amount
+    (map-set user-deposits {user: user, protocol-id: protocol-id} {
+      amount: (+ (get amount user-deposit) net-earnings),
+      shares: (get shares user-deposit), ;; Shares remain the same during compounding
+      last-compound: block-height,
+      deposit-height: (get deposit-height user-deposit)
+    })
+    
+    ;; Update user totals
+    (map-set user-totals user (merge current-user-totals {
+      total-earned: (+ (get total-earned current-user-totals) net-earnings)
+    }))
+    
+    (ok net-earnings)
+  )
+)
+
+(define-private (calculate-earnings (principal uint) (daily-rate uint) (days uint))
+  ;; Simple interest calculation: principal * rate * time
+  (/ (* (* principal daily-rate) days) u10000)
+)
+
+;; Read-only functions for UI integration
+(define-read-only (get-user-deposit-details (user principal) (protocol-id uint))
+  (map-get? user-deposits {user: user, protocol-id: protocol-id})
+)
+
+(define-read-only (get-user-total-stats (user principal))
+  (map-get? user-totals user)
+)
+
+(define-read-only (get-withdrawal-request (withdrawal-id uint))
+  (map-get? withdrawal-requests withdrawal-id)
+)
+
+(define-read-only (get-protocol-count)
+  (var-get next-protocol-id)
+)
+
+(define-read-only (get-estimated-apy (protocol-id uint))
+  (let
+    (
+      (protocol (unwrap! (map-get? protocols protocol-id) (err u0)))
+    )
+    (ok (get current-apy-bps protocol))
+  )
+)
