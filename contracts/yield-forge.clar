@@ -185,3 +185,57 @@
     (ok protocol-id)
   )
 )
+
+(define-public (update-protocol-status (protocol-id uint) (active bool))
+  (let
+    (
+      (protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
+    )
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    
+    (map-set protocols protocol-id (merge protocol {active: active}))
+    (ok true)
+  )
+)
+
+(define-public (update-protocol-apy (protocol-id uint) (new-apy-bps uint))
+  (let
+    (
+      (protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
+    )
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    
+    (map-set protocols protocol-id (merge protocol {current-apy-bps: new-apy-bps}))
+    (ok true)
+  )
+)
+
+;; Helper functions
+(define-read-only (get-protocol-by-id (protocol-id uint))
+  (map-get? protocols protocol-id)
+)
+
+(define-read-only (get-protocol-by-name (name (string-ascii 64)))
+  (let
+    (
+      (protocol-count (var-get next-protocol-id))
+      (result (fold find-protocol-by-name {found: false, id: u0} (list-protocols protocol-count)))
+    )
+    (if (get found result)
+      (map-get? protocols (get id result))
+      none
+    )
+  )
+)
+
+(define-private (find-protocol-by-name (id uint) (result {found: bool, id: uint}) (name-to-find (string-ascii 64)))
+  (let
+    (
+      (protocol (unwrap! (map-get? protocols id) result))
+    )
+    (if (is-eq (get name protocol) name-to-find)
+      {found: true, id: id}
+      result
+    )
+  )
+)
