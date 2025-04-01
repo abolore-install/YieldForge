@@ -344,3 +344,78 @@
     (ok shares-to-mint)
   )
 )
+
+(define-public (smart-deposit (amount uint) (token principal))
+  (let
+    (
+      (user-profile (get-user-risk-profile tx-sender))
+      (conservative-amount (/ (* amount (get conservative-allocation user-profile)) u10000))
+      (moderate-amount (/ (* amount (get moderate-allocation user-profile)) u10000))
+      (high-amount (- amount (+ conservative-amount moderate-amount)))
+      (best-conservative-protocol (get-best-protocol-in-risk-level RISK_CONSERVATIVE))
+      (best-moderate-protocol (get-best-protocol-in-risk-level RISK_MODERATE))
+      (best-high-protocol (get-best-protocol-in-risk-level RISK_HIGH))
+    )
+    (asserts! (not (var-get contract-paused)) (err u1013))
+    (asserts! (> amount u0) ERR-ZERO-AMOUNT)
+    
+    ;; Deposit into best protocols based on risk profile
+    (if (and (> conservative-amount u0) (is-some best-conservative-protocol))
+      (try! (deposit (unwrap-panic best-conservative-protocol) conservative-amount token))
+      true
+    )
+    
+    (if (and (> moderate-amount u0) (is-some best-moderate-protocol))
+      (try! (deposit (unwrap-panic best-moderate-protocol) moderate-amount token))
+      true
+    )
+    
+    (if (and (> high-amount u0) (is-some best-high-protocol))
+      (try! (deposit (unwrap-panic best-high-protocol) high-amount token))
+      true
+    )
+    
+    (ok true)
+  )
+)
+
+(define-private (calculate-shares-to-mint (amount uint) (protocol-id uint))
+  (let
+    (
+      (protocol (unwrap-panic (map-get? protocols protocol-id)))
+      (total-tvl (get total-tvl protocol))
+    )
+    (if (is-eq total-tvl u0)
+      amount ;; First deposit, 1:1 shares
+      (/ (* amount u1000000) (/ total-tvl u1000000)) ;; Scale to avoid precision issues
+    )
+  )
+)
+
+;; Withdraw functions
+(define-public (request-withdrawal (protocol-id uint) (amount uint))
+  (let
+    (
+      (user-deposit (unwrap! (map-get? user-deposits {user: tx-sender, protocol-id: protocol-id}) ERR-INSUFFICIENT-BALANCE))
+      (protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
+      (withdraw-id (var-get next-withdrawal-id))
+      (timelock-blocks u144) ;; ~24 hours on Bitcoin (6 blocks per hour)
+    )
+    (asserts! (not (var-get contract-paused)) (err u1013))
+    (asserts! (>= (get amount user-deposit) amount) ERR-INSUFFICIENT-BALANCE)
+    (asserts! (> amount u0) ERR-ZERO-AMOUNT)
+    
+    ;; Create withdrawal request
+    (map-set withdrawal-requests withdraw-id {
+      user: tx-sender,
+      protocol-id: protocol-id,
+      amount: amount,
+      request-height: block-height,
+      timelock-blocks: timelock-blocks,
+      status: "pending"
+    })
+    
+    (var-set next-withdrawal-id (+ withdraw-id u1))
+    (ok withdraw-id)
+  )
+)
