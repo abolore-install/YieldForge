@@ -239,3 +239,57 @@
     )
   )
 )
+
+(define-private (list-protocols (count uint))
+  (map to-uint (get-range-at u0 count))
+)
+
+(define-private (to-uint (item uint)) 
+  item
+)
+
+(define-private (get-range-at (start uint) (end uint))
+  (if (< start end)
+    (unwrap-panic (as-max-len? (append (get-range-at start (- end u1)) (- end u1)) u100))
+    (list)
+  )
+)
+
+;; User risk profile management
+(define-public (set-user-risk-profile 
+    (conservative-allocation uint) 
+    (moderate-allocation uint) 
+    (high-allocation uint))
+  (let
+    (
+      (current-user-totals (default-to {
+        total-deposited: u0,
+        total-withdrawn: u0,
+        total-earned: u0,
+        conservative-allocation: u0,
+        moderate-allocation: u0,
+        high-allocation: u0
+      } (map-get? user-totals tx-sender)))
+      (total-allocation (+ (+ conservative-allocation moderate-allocation) high-allocation))
+    )
+    (asserts! (not (var-get contract-paused)) (err u1013))
+    (asserts! (is-eq total-allocation u10000) (err u1014)) ;; Must sum to 100% (10000 basis points)
+    
+    (map-set user-totals tx-sender (merge current-user-totals {
+      conservative-allocation: conservative-allocation,
+      moderate-allocation: moderate-allocation,
+      high-allocation: high-allocation
+    }))
+    
+    (ok true)
+  )
+)
+
+(define-read-only (get-user-risk-profile (user principal))
+  (default-to {
+    conservative-allocation: u3333, ;; Default to balanced 33.33% each
+    moderate-allocation: u3333,
+    high-allocation: u3334
+  } 
+  (map-get? user-totals user))
+)
