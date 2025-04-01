@@ -123,3 +123,65 @@
     (ok (var-set insurance-fund-address new-address))
   )
 )
+
+(define-public (set-insurance-fee (new-fee-bps uint))
+  (begin
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    (asserts! (< new-fee-bps u1000) (err u1011)) ;; Max 10%
+    (ok (var-set insurance-fee-bps new-fee-bps))
+  )
+)
+
+(define-public (set-performance-fee (new-fee-bps uint))
+  (begin
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    (asserts! (< new-fee-bps u2000) (err u1012)) ;; Max 20%
+    (ok (var-set performance-fee-bps new-fee-bps))
+  )
+)
+
+(define-public (pause-contract)
+  (begin
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    (ok (var-set contract-paused true))
+  )
+)
+
+(define-public (unpause-contract)
+  (begin
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    (ok (var-set contract-paused false))
+  )
+)
+
+;; Protocol management
+(define-public (add-protocol 
+    (name (string-ascii 64)) 
+    (contract-address principal) 
+    (token-address principal) 
+    (risk-level uint)
+    (apy-bps uint))
+  (let 
+    (
+      (protocol-id (var-get next-protocol-id))
+    )
+    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
+    (asserts! (or (is-eq risk-level RISK_CONSERVATIVE) 
+                 (is-eq risk-level RISK_MODERATE) 
+                 (is-eq risk-level RISK_HIGH)) ERR-INVALID-RISK-PROFILE)
+    (asserts! (is-none (get-protocol-by-name name)) ERR-PROTOCOL-ALREADY-EXISTS)
+    
+    (map-set protocols protocol-id {
+      name: name,
+      contract-address: contract-address,
+      token-address: token-address,
+      risk-level: risk-level,
+      active: true,
+      total-tvl: u0,
+      current-apy-bps: apy-bps
+    })
+    
+    (var-set next-protocol-id (+ protocol-id u1))
+    (ok protocol-id)
+  )
+)
