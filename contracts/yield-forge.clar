@@ -472,3 +472,52 @@
     (as-contract (contract-call? token-address transfer amount tx-sender user none))
   )
 )
+
+(define-public (cancel-withdrawal (withdrawal-id uint))
+  (let
+    (
+      (withdrawal (unwrap! (map-get? withdrawal-requests withdrawal-id) ERR-INVALID-PROTOCOL-ID))
+    )
+    (asserts! (is-eq tx-sender (get user withdrawal)) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get status withdrawal) "pending") (err u1016))
+    
+    ;; Update withdrawal status
+    (map-set withdrawal-requests withdrawal-id (merge withdrawal {
+      status: "cancelled"
+    }))
+    
+    (ok true)
+  )
+)
+
+;; Protocol selection utilities
+(define-read-only (get-best-protocol-in-risk-level (risk-level uint))
+  (let
+    (
+      (protocol-count (var-get next-protocol-id))
+      (result (fold find-best-protocol-in-risk-level {found: false, id: u0, best-apy: u0} (list-protocols protocol-count) risk-level))
+    )
+    (if (get found result)
+      (some (get id result))
+      none
+    )
+  )
+)
+
+(define-private (find-best-protocol-in-risk-level 
+    (id uint) 
+    (result {found: bool, id: uint, best-apy: uint}) 
+    (risk-level uint))
+  (let
+    (
+      (protocol (unwrap! (map-get? protocols id) result))
+    )
+    (if (and 
+          (is-eq (get risk-level protocol) risk-level)
+          (get active protocol)
+          (or (not (get found result)) (> (get current-apy-bps protocol) (get best-apy result))))
+      {found: true, id: id, best-apy: (get current-apy-bps protocol)}
+      result
+    )
+  )
+)
