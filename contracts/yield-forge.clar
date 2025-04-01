@@ -419,3 +419,56 @@
     (ok withdraw-id)
   )
 )
+
+(define-public (process-withdrawal (withdrawal-id uint))
+  (let
+    (
+      (withdrawal (unwrap! (map-get? withdrawal-requests withdrawal-id) ERR-INVALID-PROTOCOL-ID))
+      (user (get user withdrawal))
+      (protocol-id (get protocol-id withdrawal))
+      (amount (get amount withdrawal))
+      (protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
+      (user-deposit (unwrap! (map-get? user-deposits {user: user, protocol-id: protocol-id}) ERR-INSUFFICIENT-BALANCE))
+      (current-user-totals (default-to {
+        total-deposited: u0,
+        total-withdrawn: u0,
+        total-earned: u0,
+        conservative-allocation: u3333,
+        moderate-allocation: u3333,
+        high-allocation: u3334
+      } (map-get? user-totals user)))
+      (token-address (get token-address protocol))
+      (shares-to-burn (/ (* amount (get shares user-deposit)) (get amount user-deposit)))
+    )
+    (asserts! (not (var-get contract-paused)) (err u1013))
+    (asserts! (is-eq (get status withdrawal) "pending") (err u1016))
+    (asserts! (>= block-height (+ (get request-height withdrawal) (get timelock-blocks withdrawal))) ERR-TIMELOCK-NOT-EXPIRED)
+    (asserts! (>= (get amount user-deposit) amount) ERR-INSUFFICIENT-BALANCE)
+    
+    ;; Update protocol TVL
+    (map-set protocols protocol-id (merge protocol {
+      total-tvl: (- (get total-tvl protocol) amount)
+    }))
+    
+    ;; Update user deposits
+    (map-set user-deposits {user: user, protocol-id: protocol-id} {
+      amount: (- (get amount user-deposit) amount),
+      shares: (- (get shares user-deposit) shares-to-burn),
+      last-compound: (get last-compound user-deposit),
+      deposit-height: (get deposit-height user-deposit)
+    })
+    
+    ;; Update user totals
+    (map-set user-totals user (merge current-user-totals {
+      total-withdrawn: (+ (get total-withdrawn current-user-totals) amount)
+    }))
+    
+    ;; Update withdrawal status
+    (map-set withdrawal-requests withdrawal-id (merge withdrawal {
+      status: "processed"
+    }))
+    
+    ;; Transfer tokens from contract to user
+    (as-contract (contract-call? token-address transfer amount tx-sender user none))
+  )
+)
