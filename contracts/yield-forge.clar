@@ -293,3 +293,54 @@
   } 
   (map-get? user-totals user))
 )
+
+;; Deposit functions
+(define-public (deposit (protocol-id uint) (amount uint) (token principal))
+  (let
+    (
+      (protocol (unwrap! (map-get? protocols protocol-id) ERR-INVALID-PROTOCOL-ID))
+      (user-deposit (default-to {
+        amount: u0, 
+        shares: u0,
+        last-compound: block-height,
+        deposit-height: block-height
+      } (map-get? user-deposits {user: tx-sender, protocol-id: protocol-id})))
+      (current-user-totals (default-to {
+        total-deposited: u0,
+        total-withdrawn: u0,
+        total-earned: u0,
+        conservative-allocation: u3333,
+        moderate-allocation: u3333,
+        high-allocation: u3334
+      } (map-get? user-totals tx-sender)))
+      (shares-to-mint (calculate-shares-to-mint amount protocol-id))
+    )
+    (asserts! (not (var-get contract-paused)) (err u1013))
+    (asserts! (> amount u0) ERR-ZERO-AMOUNT)
+    (asserts! (get active protocol) ERR-PROTOCOL-NOT-ACTIVE)
+    (asserts! (is-eq token (get token-address protocol)) (err u1015))
+    
+    ;; Transfer tokens from user to this contract
+    (try! (contract-call? token transfer amount tx-sender (as-contract tx-sender) none))
+    
+    ;; Update protocol TVL
+    (map-set protocols protocol-id (merge protocol {
+      total-tvl: (+ (get total-tvl protocol) amount)
+    }))
+    
+    ;; Update user deposits
+    (map-set user-deposits {user: tx-sender, protocol-id: protocol-id} {
+      amount: (+ (get amount user-deposit) amount),
+      shares: (+ (get shares user-deposit) shares-to-mint),
+      last-compound: block-height,
+      deposit-height: (if (is-eq (get amount user-deposit) u0) block-height (get deposit-height user-deposit))
+    })
+    
+    ;; Update user totals
+    (map-set user-totals tx-sender (merge current-user-totals {
+      total-deposited: (+ (get total-deposited current-user-totals) amount)
+    }))
+    
+    (ok shares-to-mint)
+  )
+)
